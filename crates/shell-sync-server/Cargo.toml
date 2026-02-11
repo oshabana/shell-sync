@@ -1,0 +1,25 @@
+[package]
+name = "shell-sync-server"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+shell-sync-core = { path = "../shell-sync-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+axum = { workspace = true }
+axum-extra = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+rust-embed = { workspace = true }
+git2 = { workspace = true }
+mdns-sd = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+futures-util = { workspace = true }
+gethostname = "1"
+mime_guess = "2"

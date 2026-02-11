@@ -1,0 +1,13 @@
+services:
+  shell-sync:
+    build: .
+    ports:
+      - "8888:8888"
+    volumes:
+      - shell-sync-data:/data
+      - shell-sync-git:/git-repo
+    restart: unless-stopped
+
+volumes:
+  shell-sync-data:
+  shell-sync-git:

@@ -1,0 +1,49 @@
+[workspace]
+members = [
+    "crates/shell-sync-core",
+    "crates/shell-sync-server",
+    "crates/shell-sync-client",
+    "crates/shell-sync-cli",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/user/helpful-stuff"
+
+[workspace.dependencies]
+# Shared across crates
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "1"
+anyhow = "1"
+regex = "1"
+toml = "0.8"
+directories = "5"
+
+# Server
+axum = { version = "0.7", features = ["ws"] }
+axum-extra = { version = "0.9", features = ["typed-header"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "fs", "trace"] }
+rust-embed = { version = "8", features = ["compression"] }
+git2 = { version = "0.18", features = ["vendored-libgit2"] }
+mdns-sd = "0.11"
+
+# Client
+tokio-tungstenite = { version = "0.21", features = ["rustls-tls-webpki-roots"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+futures-util = "0.3"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+comfy-table = "7"

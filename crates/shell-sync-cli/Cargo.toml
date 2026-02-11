@@ -1,0 +1,21 @@
+[package]
+name = "shell-sync"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "shell-sync"
+path = "src/main.rs"
+
+[dependencies]
+shell-sync-core = { path = "../shell-sync-core" }
+shell-sync-server = { path = "../shell-sync-server" }
+shell-sync-client = { path = "../shell-sync-client" }
+clap = { workspace = true }
+clap_complete = { workspace = true }
+comfy-table = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
