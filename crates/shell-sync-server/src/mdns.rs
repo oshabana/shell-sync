@@ -8,9 +8,7 @@ pub fn start_broadcast(port: u16) -> anyhow::Result<mdns_sd::ServiceDaemon> {
     let mdns = mdns_sd::ServiceDaemon::new()
         .map_err(|e| anyhow::anyhow!("Failed to create mDNS daemon: {}", e))?;
 
-    let hostname = gethostname::gethostname()
-        .to_string_lossy()
-        .into_owned();
+    let hostname = gethostname::gethostname().to_string_lossy().into_owned();
 
     let service_name = format!("shell-sync-{}", hostname);
 

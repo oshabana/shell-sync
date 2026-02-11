@@ -11,6 +11,7 @@ path = "src/main.rs"
 shell-sync-core = { path = "../shell-sync-core" }
 shell-sync-server = { path = "../shell-sync-server" }
 shell-sync-client = { path = "../shell-sync-client" }
+shell-sync-tui = { path = "../shell-sync-tui" }
 clap = { workspace = true }
 clap_complete = { workspace = true }
 comfy-table = { workspace = true }

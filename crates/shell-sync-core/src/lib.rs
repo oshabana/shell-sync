@@ -1,6 +1,9 @@
 pub mod config;
 pub mod db;
+pub mod encryption;
+pub mod hooks;
 pub mod models;
 pub mod protocol;
 pub mod secrets;
 pub mod shell;
+pub mod stats;

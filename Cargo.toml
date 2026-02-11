@@ -4,6 +4,7 @@ members = [
     "crates/shell-sync-server",
     "crates/shell-sync-client",
     "crates/shell-sync-cli",
+    "crates/shell-sync-tui",
 ]
 resolver = "2"
 
@@ -47,3 +48,19 @@ futures-util = "0.3"
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 comfy-table = "7"
+
+# Encryption
+aes-gcm = "0.10"
+x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+sha2 = "0.10"
+rand = "0.8"
+base64 = "0.22"
+zeroize = { version = "1.7", features = ["derive"] }
+
+# TUI
+ratatui = "0.29"
+crossterm = "0.28"
+nucleo = "0.5"
+
+# Testing
+tempfile = "3"

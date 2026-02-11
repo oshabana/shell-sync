@@ -5,6 +5,7 @@ import { Machines } from './pages/machines';
 import { Conflicts } from './pages/conflicts';
 import { History } from './pages/history';
 import { Settings } from './pages/settings';
+import { Stats } from './pages/stats';
 
 const PAGES = {
   '': { label: 'Dashboard', component: Dashboard },
@@ -12,6 +13,7 @@ const PAGES = {
   machines: { label: 'Machines', component: Machines },
   conflicts: { label: 'Conflicts', component: Conflicts },
   history: { label: 'History', component: History },
+  stats: { label: 'Stats', component: Stats },
   settings: { label: 'Settings', component: Settings },
 };
 

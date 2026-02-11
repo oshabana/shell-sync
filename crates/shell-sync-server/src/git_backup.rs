@@ -155,12 +155,19 @@ impl GitBackup {
             repo.commit(Some("HEAD"), &sig, &sig, &message, &tree, &[])?;
         }
 
-        info!(aliases = aliases.len(), groups = grouped.len(), "Committed changes");
+        info!(
+            aliases = aliases.len(),
+            groups = grouped.len(),
+            "Committed changes"
+        );
         Ok(())
     }
 
     /// Spawn a background task that periodically syncs.
-    pub fn spawn_periodic_sync(self: &Arc<Self>, interval_secs: u64) -> tokio::task::JoinHandle<()> {
+    pub fn spawn_periodic_sync(
+        self: &Arc<Self>,
+        interval_secs: u64,
+    ) -> tokio::task::JoinHandle<()> {
         let backup = Arc::clone(self);
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
@@ -192,6 +199,7 @@ fn generate_alias_file(group_name: &str, aliases: &[shell_sync_core::models::Ali
     out
 }
 
+/// Generate a markdown summary of alias groups. Visible for testing.
 fn generate_summary(
     grouped: &std::collections::HashMap<String, Vec<shell_sync_core::models::Alias>>,
 ) -> String {
@@ -217,4 +225,70 @@ fn generate_summary(
     }
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shell_sync_core::models::Alias;
+
+    fn make_alias(name: &str, command: &str, group: &str) -> Alias {
+        Alias {
+            id: 1,
+            name: name.into(),
+            command: command.into(),
+            group_name: group.into(),
+            created_by_machine: "m1".into(),
+            created_at: 1000,
+            updated_at: 1000,
+            version: 1,
+        }
+    }
+
+    #[test]
+    fn alias_file_has_shebang_and_group() {
+        let aliases = vec![make_alias("gs", "git status", "default")];
+        let content = generate_alias_file("default", &aliases);
+        assert!(content.starts_with("#!/bin/bash"));
+        assert!(content.contains("default group"));
+    }
+
+    #[test]
+    fn alias_file_formats_aliases() {
+        let aliases = vec![
+            make_alias("gs", "git status", "default"),
+            make_alias("gp", "git push", "default"),
+        ];
+        let content = generate_alias_file("default", &aliases);
+        assert!(content.contains("alias gs='git status'"));
+        assert!(content.contains("alias gp='git push'"));
+    }
+
+    #[test]
+    fn alias_file_escapes_quotes() {
+        let aliases = vec![make_alias("say", "echo 'hello'", "default")];
+        let content = generate_alias_file("default", &aliases);
+        assert!(content.contains(r"alias say='echo '\''hello'\'''"));
+    }
+
+    #[test]
+    fn summary_contains_stats() {
+        let mut grouped = std::collections::HashMap::new();
+        grouped.insert(
+            "default".to_string(),
+            vec![make_alias("gs", "git status", "default")],
+        );
+        grouped.insert(
+            "work".to_string(),
+            vec![
+                make_alias("dc", "docker-compose", "work"),
+                make_alias("k", "kubectl", "work"),
+            ],
+        );
+        let summary = generate_summary(&grouped);
+        assert!(summary.contains("Total aliases: 3"));
+        assert!(summary.contains("Total groups: 2"));
+        assert!(summary.contains("### default"));
+        assert!(summary.contains("### work"));
+    }
 }

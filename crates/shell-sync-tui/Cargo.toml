@@ -1,0 +1,13 @@
+[package]
+name = "shell-sync-tui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+shell-sync-core = { path = "../shell-sync-core" }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+nucleo = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+regex = { workspace = true }

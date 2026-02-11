@@ -143,6 +143,45 @@ pub enum Commands {
         /// Path to the old Node.js sync.db database
         old_db_path: String,
     },
+
+    /// Interactive history search (Ctrl+R replacement)
+    Search {
+        /// Initial search query
+        #[arg(default_value = "")]
+        query: String,
+        /// Output selected command to stdout (for shell integration)
+        #[arg(long)]
+        inline: bool,
+    },
+
+    /// Encrypt existing plaintext data and re-upload
+    EncryptMigrate,
+
+    /// Generate and install shell hooks for history capture
+    InitHooks {
+        /// Overwrite existing hook files
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Show shell usage statistics and analytics
+    Stats {
+        /// Time period (e.g., "7d", "30d", "1y", "all")
+        #[arg(long, default_value = "30d")]
+        last: String,
+        /// Filter by machine
+        #[arg(long)]
+        machine: Option<String>,
+        /// Filter by group
+        #[arg(long)]
+        group: Option<String>,
+        /// Filter by directory
+        #[arg(long)]
+        directory: Option<String>,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Clone, Debug, clap::ValueEnum)]

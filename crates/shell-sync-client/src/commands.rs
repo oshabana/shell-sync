@@ -480,7 +480,7 @@ pub fn migrate(old_db_path: &str) -> anyhow::Result<()> {
     // Migrate machines (preserving UUIDs and tokens)
     for (mid, host, groups, os, token, _, _) in &machines {
         let groups: Vec<String> = serde_json::from_str(groups).unwrap_or_default();
-        new_db.register_machine(mid, host, &groups, os.as_deref().unwrap_or("unknown"), token)?;
+        new_db.register_machine(mid, host, &groups, os.as_deref().unwrap_or("unknown"), token, None)?;
     }
 
     // Migrate aliases
@@ -494,6 +494,305 @@ pub fn migrate(old_db_path: &str) -> anyhow::Result<()> {
     }
 
     println!("Migration complete: {} aliases migrated, {} skipped (duplicates)", added, skipped);
+
+    Ok(())
+}
+
+/// `shell-sync init-hooks [--force]`
+pub fn init_hooks(force: bool) -> anyhow::Result<()> {
+    use shell_sync_core::config::{hooks_dir_path, socket_path};
+    use shell_sync_core::hooks::generate_hooks;
+    use shell_sync_core::shell::detect_shell;
+
+    let shell = detect_shell();
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let sock = socket_path();
+    let sock_str = sock.to_str().unwrap_or("/tmp/shell-sync.sock");
+
+    let hooks_content = generate_hooks(shell, sock_str, &session_id);
+
+    let hooks_dir = hooks_dir_path();
+    std::fs::create_dir_all(&hooks_dir)?;
+
+    let extension = match shell {
+        shell_sync_core::shell::ShellType::Zsh => "zsh",
+        shell_sync_core::shell::ShellType::Bash => "bash",
+        shell_sync_core::shell::ShellType::Fish => "fish",
+    };
+    let hook_file = hooks_dir.join(format!("shell-sync-hooks.{}", extension));
+
+    if hook_file.exists() && !force {
+        println!("Hook file already exists: {}", hook_file.display());
+        println!("Use --force to overwrite");
+        return Ok(());
+    }
+
+    std::fs::write(&hook_file, &hooks_content)?;
+    println!("Hook file written: {}", hook_file.display());
+
+    let source_line = match shell {
+        shell_sync_core::shell::ShellType::Fish => {
+            format!("source \"{}\"", hook_file.display())
+        }
+        _ => {
+            format!(
+                "[ -f \"{}\" ] && source \"{}\"",
+                hook_file.display(),
+                hook_file.display()
+            )
+        }
+    };
+
+    let rc_file = shell.rc_file();
+    println!();
+    println!("Add this line to {}:", rc_file.display());
+    println!("  {}", source_line);
+
+    Ok(())
+}
+
+/// `shell-sync encrypt-migrate`
+/// Encrypt existing plaintext aliases and re-upload them.
+pub async fn encrypt_migrate() -> anyhow::Result<()> {
+    use shell_sync_core::config::keys_dir_path;
+    use shell_sync_core::encryption::{self, KeyManager};
+
+    let (client, config) = client_and_config()?;
+
+    // Init key manager
+    let keys_dir = keys_dir_path();
+    let mut key_mgr = KeyManager::new(keys_dir)
+        .map_err(|e| anyhow::anyhow!("Failed to init encryption: {e}"))?;
+
+    println!("Fetching aliases from server...");
+
+    let resp = client
+        .get(format!("{}/api/aliases", config.server_url))
+        .header("Authorization", auth_header(&config))
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        anyhow::bail!("Failed to fetch aliases (HTTP {})", resp.status());
+    }
+
+    let data: serde_json::Value = resp.json().await?;
+    let aliases: Vec<Alias> = serde_json::from_value(data["aliases"].clone()).unwrap_or_default();
+
+    if aliases.is_empty() {
+        println!("No aliases to migrate");
+        return Ok(());
+    }
+
+    println!("Found {} aliases to encrypt", aliases.len());
+
+    // Ensure group keys exist for all groups
+    let groups: std::collections::HashSet<String> =
+        aliases.iter().map(|a| a.group_name.clone()).collect();
+
+    for group in &groups {
+        if !key_mgr.has_group_key(group) {
+            key_mgr.create_group_key(group)
+                .map_err(|e| anyhow::anyhow!("Failed to create group key for '{group}': {e}"))?;
+            println!("  Created encryption key for group '{}'", group);
+        }
+    }
+
+    // Encrypt and re-upload each alias
+    let mut encrypted = 0;
+    let mut failed = 0;
+
+    for alias in &aliases {
+        let key = key_mgr.get_group_key(&alias.group_name).unwrap();
+        match encryption::encrypt_alias(key, alias) {
+            Ok(enc) => {
+                let resp = client
+                    .put(format!("{}/api/aliases/{}", config.server_url, alias.id))
+                    .header("Authorization", auth_header(&config))
+                    .json(&serde_json::json!({
+                        "command": enc.command,
+                        "encrypted": true,
+                        "nonce": enc.nonce,
+                    }))
+                    .send()
+                    .await;
+
+                match resp {
+                    Ok(r) if r.status().is_success() => encrypted += 1,
+                    Ok(r) => {
+                        println!("  Failed to update '{}': HTTP {}", alias.name, r.status());
+                        failed += 1;
+                    }
+                    Err(e) => {
+                        println!("  Failed to update '{}': {}", alias.name, e);
+                        failed += 1;
+                    }
+                }
+            }
+            Err(e) => {
+                println!("  Failed to encrypt '{}': {}", alias.name, e);
+                failed += 1;
+            }
+        }
+    }
+
+    println!();
+    println!("Encryption migration complete:");
+    println!("  Encrypted: {}", encrypted);
+    if failed > 0 {
+        println!("  Failed:    {}", failed);
+    }
+    println!();
+    println!("Group keys are stored in ~/.shell-sync/keys/groups/");
+    println!("Other machines will receive keys via the key exchange protocol.");
+
+    Ok(())
+}
+
+/// `shell-sync stats [--last 30d] [--machine X] [--group X] [--directory X] [--json]`
+pub fn show_stats(
+    last: &str,
+    machine: Option<String>,
+    group: Option<String>,
+    directory: Option<String>,
+    json_output: bool,
+) -> anyhow::Result<()> {
+    use shell_sync_core::config::history_db_path;
+    use shell_sync_core::db::SyncDatabase;
+    use shell_sync_core::stats::{compute_stats, parse_last_filter, StatsFilter};
+
+    let db_path = history_db_path();
+    if !db_path.exists() {
+        anyhow::bail!("No history database found at {}. Run the daemon first.", db_path.display());
+    }
+
+    let db = SyncDatabase::open(db_path.to_str().unwrap_or("history.db"))?;
+
+    let after_timestamp = parse_last_filter(last);
+    let filter = StatsFilter {
+        after_timestamp,
+        machine_id: machine,
+        group_name: group,
+        directory,
+    };
+
+    let stats = compute_stats(&db, &filter)?;
+
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&stats)?);
+        return Ok(());
+    }
+
+    // Pretty print
+    println!();
+    println!("  Shell Usage Statistics (last {})", last);
+    println!("  {}", "=".repeat(40));
+    println!();
+
+    // Summary
+    println!("  Total commands:   {}", stats.total_commands);
+    println!("  Unique commands:  {}", stats.unique_commands);
+    println!("  Success rate:     {:.1}%", stats.success_rate);
+    println!("  Streak:           {} day(s)", stats.streak_days);
+    println!();
+
+    // Duration
+    println!("  Duration");
+    println!("  {}", "-".repeat(30));
+    println!("  Average:  {:.0} ms", stats.avg_duration_ms);
+    println!("  Median:   {} ms", stats.median_duration_ms);
+    println!("  P95:      {} ms", stats.p95_duration_ms);
+    println!();
+
+    // Top commands
+    if !stats.top_commands.is_empty() {
+        println!("  Top Commands");
+        println!("  {}", "-".repeat(30));
+        let max_count = stats.top_commands.first().map(|c| c.1).unwrap_or(1);
+        for (cmd, count) in &stats.top_commands {
+            let bar_len = if max_count > 0 {
+                ((*count as f64 / max_count as f64) * 20.0) as usize
+            } else {
+                0
+            };
+            let bar: String = "\u{2588}".repeat(bar_len);
+            let cmd_display = if cmd.len() > 30 {
+                format!("{}...", &cmd[..27])
+            } else {
+                cmd.clone()
+            };
+            println!("  {:>6}  {:<20}  {}", count, bar, cmd_display);
+        }
+        println!();
+    }
+
+    // Top prefixes
+    if !stats.top_prefixes.is_empty() {
+        println!("  Top Prefixes");
+        println!("  {}", "-".repeat(30));
+        let max_count = stats.top_prefixes.first().map(|c| c.1).unwrap_or(1);
+        for (prefix, count) in &stats.top_prefixes {
+            let bar_len = if max_count > 0 {
+                ((*count as f64 / max_count as f64) * 20.0) as usize
+            } else {
+                0
+            };
+            let bar: String = "\u{2588}".repeat(bar_len);
+            println!("  {:>6}  {:<20}  {}", count, bar, prefix);
+        }
+        println!();
+    }
+
+    // Hourly distribution
+    println!("  Activity by Hour");
+    println!("  {}", "-".repeat(30));
+    let max_hourly = stats.hourly_distribution.iter().max().copied().unwrap_or(1);
+    for (hour, &count) in stats.hourly_distribution.iter().enumerate() {
+        let bar_len = if max_hourly > 0 {
+            ((count as f64 / max_hourly as f64) * 20.0) as usize
+        } else {
+            0
+        };
+        let bar: String = "\u{2592}".repeat(bar_len);
+        println!("  {:02}:00  {:>5}  {}", hour, count, bar);
+    }
+    println!();
+
+    // Daily distribution
+    let day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    println!("  Activity by Day");
+    println!("  {}", "-".repeat(30));
+    let max_daily = stats.daily_distribution.iter().max().copied().unwrap_or(1);
+    for (i, &count) in stats.daily_distribution.iter().enumerate() {
+        let bar_len = if max_daily > 0 {
+            ((count as f64 / max_daily as f64) * 20.0) as usize
+        } else {
+            0
+        };
+        let bar: String = "\u{2592}".repeat(bar_len);
+        println!("  {}  {:>5}  {}", day_names[i], count, bar);
+    }
+    println!();
+
+    // Per directory
+    if !stats.per_directory.is_empty() {
+        println!("  Top Directories");
+        println!("  {}", "-".repeat(30));
+        for (dir, count) in &stats.per_directory {
+            println!("  {:>6}  {}", count, dir);
+        }
+        println!();
+    }
+
+    // Per machine
+    if stats.per_machine.len() > 1 {
+        println!("  Per Machine");
+        println!("  {}", "-".repeat(30));
+        for (host, count) in &stats.per_machine {
+            println!("  {:>6}  {}", count, host);
+        }
+        println!();
+    }
 
     Ok(())
 }

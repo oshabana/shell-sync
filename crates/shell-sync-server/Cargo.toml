@@ -23,3 +23,9 @@ anyhow = { workspace = true }
 futures-util = { workspace = true }
 gethostname = "1"
 mime_guess = "2"
+
+[dev-dependencies]
+tempfile = { workspace = true }
+hyper = { version = "1", features = ["full"] }
+http-body-util = "0.1"
+tower = { version = "0.4", features = ["util"] }

@@ -1,4 +1,5 @@
-use shell_sync_core::config::{save_client_config, ClientConfig};
+use shell_sync_core::config::{client_config_dir, save_client_config, ClientConfig};
+use shell_sync_core::encryption::KeyManager;
 use shell_sync_core::models::RegisterResponse;
 
 /// Register this machine with a sync server.
@@ -26,6 +27,12 @@ pub async fn register(server_url: Option<String>, groups: Vec<String>) -> anyhow
         .to_string_lossy()
         .into_owned();
 
+    // Generate encryption keypair
+    let keys_dir = client_config_dir().join("keys");
+    let key_manager = KeyManager::new(keys_dir)
+        .map_err(|e| anyhow::anyhow!("Failed to initialize encryption keys: {e}"))?;
+    let public_key = key_manager.public_key_b64();
+
     println!("Registering with {}...", url);
     println!("Groups: {}", groups.join(", "));
 
@@ -35,7 +42,8 @@ pub async fn register(server_url: Option<String>, groups: Vec<String>) -> anyhow
         .json(&serde_json::json!({
             "hostname": hostname,
             "groups": groups,
-            "os_type": std::env::consts::OS
+            "os_type": std::env::consts::OS,
+            "public_key": public_key
         }))
         .send()
         .await?;

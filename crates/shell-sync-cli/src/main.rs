@@ -96,6 +96,28 @@ async fn main() -> anyhow::Result<()> {
         cli::Commands::Migrate { old_db_path } => {
             shell_sync_client::commands::migrate(&old_db_path)?;
         }
+
+        cli::Commands::Search { query, inline } => {
+            shell_sync_tui::run_search(&query, inline)?;
+        }
+
+        cli::Commands::EncryptMigrate => {
+            shell_sync_client::commands::encrypt_migrate().await?;
+        }
+
+        cli::Commands::InitHooks { force } => {
+            shell_sync_client::commands::init_hooks(force)?;
+        }
+
+        cli::Commands::Stats {
+            last,
+            machine,
+            group,
+            directory,
+            json,
+        } => {
+            shell_sync_client::commands::show_stats(&last, machine, group, directory, json)?;
+        }
     }
 
     Ok(())

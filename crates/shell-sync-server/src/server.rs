@@ -21,6 +21,31 @@ use crate::ws::{self, WsHub};
 #[folder = "../../web-ui/dist"]
 struct WebAssets;
 
+/// Build the Axum router with all API routes and WebSocket handler.
+pub fn build_router(state: Arc<AppState>) -> Router {
+    Router::new()
+        // REST API
+        .route("/api/health", get(api::health))
+        .route("/api/register", post(api::register))
+        .route("/api/aliases", get(api::get_aliases).post(api::add_alias))
+        .route(
+            "/api/aliases/:id",
+            put(api::update_alias).delete(api::delete_alias),
+        )
+        .route("/api/aliases/name/:name", delete(api::delete_alias_by_name))
+        .route("/api/conflicts", get(api::get_conflicts))
+        .route("/api/conflicts/resolve", post(api::resolve_conflict))
+        .route("/api/import", post(api::import_aliases))
+        .route("/api/history", get(api::get_history))
+        .route("/api/machines", get(api::get_machines))
+        .route("/api/git/sync", post(api::force_git_sync))
+        .route("/api/shell-history", get(api::get_shell_history))
+        // WebSocket
+        .route("/ws", get(ws_upgrade))
+        .layer(CorsLayer::permissive())
+        .with_state(state)
+}
+
 /// Build and start the shell-sync server.
 pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     let db = Arc::new(SyncDatabase::open(&config.db_path)?);
@@ -51,23 +76,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         git_backup: Arc::clone(&git_backup),
     });
 
-    let mut app = Router::new()
-        // REST API
-        .route("/api/health", get(api::health))
-        .route("/api/register", post(api::register))
-        .route("/api/aliases", get(api::get_aliases).post(api::add_alias))
-        .route("/api/aliases/{id}", put(api::update_alias).delete(api::delete_alias))
-        .route("/api/aliases/name/{name}", delete(api::delete_alias_by_name))
-        .route("/api/conflicts", get(api::get_conflicts))
-        .route("/api/conflicts/resolve", post(api::resolve_conflict))
-        .route("/api/import", post(api::import_aliases))
-        .route("/api/history", get(api::get_history))
-        .route("/api/machines", get(api::get_machines))
-        .route("/api/git/sync", post(api::force_git_sync))
-        // WebSocket
-        .route("/ws", get(ws_upgrade))
-        .layer(CorsLayer::permissive())
-        .with_state(state);
+    let mut app = build_router(state);
 
     // Embed web UI if enabled
     if config.web_ui_enabled {
@@ -93,7 +102,14 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     println!("  Web UI: http://localhost:{}/", config.port);
     println!("  Database: {}", config.db_path);
     println!("  Git Repo: {}", config.git_repo_path);
-    println!("  mDNS: {}", if config.mdns_enabled { "enabled" } else { "disabled" });
+    println!(
+        "  mDNS: {}",
+        if config.mdns_enabled {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
     println!("=================================");
     println!();
 
@@ -103,11 +119,10 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
 }
 
 /// WebSocket upgrade handler at GET /ws.
-async fn ws_upgrade(
-    ws: WebSocketUpgrade,
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| ws::handle_ws(socket, Arc::clone(&state.db), Arc::clone(&state.hub)))
+async fn ws_upgrade(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| {
+        ws::handle_ws(socket, Arc::clone(&state.db), Arc::clone(&state.hub))
+    })
 }
 
 /// Serve embedded web UI assets with SPA fallback.
@@ -121,7 +136,8 @@ async fn serve_embedded(uri: Uri) -> Response {
             StatusCode::OK,
             [(header::CONTENT_TYPE, mime.as_ref())],
             file.data.to_vec(),
-        ).into_response();
+        )
+            .into_response();
     }
 
     // SPA fallback: serve index.html for any unknown route

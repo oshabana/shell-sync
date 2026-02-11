@@ -90,6 +90,26 @@ pub fn offline_queue_db_path() -> PathBuf {
     client_config_dir().join("offline-queue.db")
 }
 
+/// Returns the path to the history database.
+pub fn history_db_path() -> PathBuf {
+    client_config_dir().join("history.db")
+}
+
+/// Returns the path to the Unix socket for hook communication.
+pub fn socket_path() -> PathBuf {
+    client_config_dir().join("sock")
+}
+
+/// Returns the path to the encryption keys directory.
+pub fn keys_dir_path() -> PathBuf {
+    client_config_dir().join("keys")
+}
+
+/// Returns the path to the shell hooks directory.
+pub fn hooks_dir_path() -> PathBuf {
+    client_config_dir().join("hooks")
+}
+
 /// Load client config from disk.
 pub fn load_client_config() -> anyhow::Result<ClientConfig> {
     let path = client_config_path();
@@ -107,4 +127,58 @@ pub fn save_client_config(config: &ClientConfig) -> anyhow::Result<()> {
     let content = toml::to_string_pretty(config)?;
     std::fs::write(&path, content)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn server_config_defaults() {
+        let cfg = ServerConfig::default();
+        assert_eq!(cfg.port, 8888);
+        assert!(cfg.mdns_enabled);
+        assert!(cfg.web_ui_enabled);
+        assert_eq!(cfg.git_sync_interval_secs, 300);
+    }
+
+    #[test]
+    fn server_config_toml_roundtrip() {
+        let cfg = ServerConfig {
+            port: 9999,
+            db_path: "/tmp/test.db".into(),
+            git_repo_path: "/tmp/git".into(),
+            mdns_enabled: false,
+            web_ui_enabled: false,
+            git_sync_interval_secs: 60,
+        };
+        let toml_str = toml::to_string(&cfg).unwrap();
+        let parsed: ServerConfig = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.port, 9999);
+        assert_eq!(parsed.db_path, "/tmp/test.db");
+        assert!(!parsed.mdns_enabled);
+        assert!(!parsed.web_ui_enabled);
+        assert_eq!(parsed.git_sync_interval_secs, 60);
+    }
+
+    #[test]
+    fn empty_toml_uses_defaults() {
+        let cfg: ServerConfig = toml::from_str("").unwrap();
+        assert_eq!(cfg.port, 8888);
+        assert!(cfg.mdns_enabled);
+        assert!(cfg.web_ui_enabled);
+        assert_eq!(cfg.git_sync_interval_secs, 300);
+    }
+
+    #[test]
+    fn client_paths_under_shell_sync_dir() {
+        let config_path = client_config_path();
+        assert!(config_path
+            .to_str()
+            .unwrap()
+            .ends_with(".shell-sync/config.toml"));
+
+        let alias_path = client_alias_path("sh");
+        assert!(alias_path.to_str().unwrap().ends_with("aliases.sh"));
+    }
 }

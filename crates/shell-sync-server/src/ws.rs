@@ -83,12 +83,23 @@ impl WsHub {
             "Broadcast to clients"
         );
     }
+
+    /// Send a message to a specific machine by its machine_id.
+    pub async fn send_to_machine(&self, machine_id: &str, msg: &str) -> bool {
+        let clients = self.clients.read().await;
+        if let Some(client) = clients.get(machine_id) {
+            client.tx.send(msg.to_string()).is_ok()
+        } else {
+            false
+        }
+    }
 }
 
 /// Handle a single WebSocket connection through the auth flow and message loop.
 pub async fn handle_ws(socket: WebSocket, db: Arc<SyncDatabase>, hub: Arc<WsHub>) {
     let (mut ws_tx, mut ws_rx) = socket.split();
     let mut machine_id: Option<String> = None;
+    let mut machine_groups: Vec<String> = Vec::new();
 
     // Create a channel for outbound messages
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
@@ -127,6 +138,7 @@ pub async fn handle_ws(socket: WebSocket, db: Arc<SyncDatabase>, hub: Arc<WsHub>
                         let _ = db.update_machine_last_seen(&mid);
                         hub.add_client(mid.clone(), tx.clone()).await;
                         machine_id = Some(mid.clone());
+                        machine_groups = m.groups.clone();
 
                         let resp = serde_json::json!({
                             "event": "auth_success",
@@ -151,6 +163,149 @@ pub async fn handle_ws(socket: WebSocket, db: Arc<SyncDatabase>, hub: Arc<WsHub>
                     "data": { "timestamp": chrono::Utc::now().timestamp_millis() }
                 });
                 let _ = tx.send(resp.to_string());
+            }
+            "key_request" => {
+                if let Some(ref mid) = machine_id {
+                    let group_name = data
+                        .get("group_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let public_key = data
+                        .get("public_key")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+
+                    if !group_name.is_empty() && !public_key.is_empty() {
+                        // Look up the sender's groups to verify membership
+                        if let Ok(Some(sender)) = db.get_machine_by_id(mid) {
+                            if sender.groups.contains(&group_name.to_string()) {
+                                let event = serde_json::json!({
+                                    "event": "key_request",
+                                    "data": {
+                                        "group_name": group_name,
+                                        "requester_machine_id": mid,
+                                        "public_key": public_key,
+                                    }
+                                });
+                                let event_str = event.to_string();
+
+                                // Broadcast to other group members
+                                if let Ok(machines) = db.get_machines_by_group(group_name) {
+                                    for m in machines {
+                                        if m.machine_id != *mid {
+                                            hub.send_to_machine(&m.machine_id, &event_str).await;
+                                        }
+                                    }
+                                }
+                                info!(machine_id = %mid, group = %group_name, "Key request broadcast");
+                            }
+                        }
+                    }
+                }
+            }
+            "key_response" => {
+                if let Some(ref mid) = machine_id {
+                    let group_name = data
+                        .get("group_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let target_machine_id = data
+                        .get("target_machine_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let wrapped_key = data
+                        .get("wrapped_key")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+
+                    if !target_machine_id.is_empty() && !wrapped_key.is_empty() {
+                        // Get the sender's public key to include in the response
+                        let sender_public_key = if let Ok(Some(sender)) = db.get_machine_by_id(mid)
+                        {
+                            sender.public_key.unwrap_or_default()
+                        } else {
+                            String::new()
+                        };
+
+                        let event = serde_json::json!({
+                            "event": "key_response",
+                            "data": {
+                                "group_name": group_name,
+                                "wrapped_key": wrapped_key,
+                                "sender_public_key": sender_public_key,
+                            }
+                        });
+                        let sent = hub
+                            .send_to_machine(target_machine_id, &event.to_string())
+                            .await;
+                        info!(
+                            from = %mid,
+                            to = %target_machine_id,
+                            group = %group_name,
+                            delivered = sent,
+                            "Key response relayed"
+                        );
+                    }
+                }
+            }
+            "history_batch" => {
+                if let Some(ref mid) = machine_id {
+                    let entries: Vec<shell_sync_core::models::HistoryEntry> =
+                        serde_json::from_value(data["entries"].clone()).unwrap_or_default();
+                    if !entries.is_empty() {
+                        let count = db.insert_history_batch(&entries);
+                        info!(machine_id = %mid, count, "History batch received");
+
+                        // Broadcast to group members
+                        if !machine_groups.is_empty() {
+                            hub.broadcast_to_groups(
+                                &db,
+                                &machine_groups,
+                                "history_sync",
+                                serde_json::json!({
+                                    "entries": entries,
+                                    "source_machine_id": mid,
+                                }),
+                                Some(mid),
+                            )
+                            .await;
+                        }
+                    }
+                }
+            }
+            "history_query" => {
+                if let Some(ref _mid) = machine_id {
+                    let after_timestamp = data
+                        .get("after_timestamp")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
+                    let group_name = data
+                        .get("group_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("default");
+                    let limit = data
+                        .get("limit")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(100)
+                        .min(1000);
+
+                    match db.get_history_after_timestamp(after_timestamp, group_name, limit) {
+                        Ok(entries) => {
+                            let has_more = entries.len() as i64 == limit;
+                            let resp = serde_json::json!({
+                                "event": "history_page",
+                                "data": {
+                                    "entries": entries,
+                                    "has_more": has_more,
+                                }
+                            });
+                            let _ = tx.send(resp.to_string());
+                        }
+                        Err(e) => {
+                            warn!("History query error: {e}");
+                        }
+                    }
+                }
             }
             _ => {
                 warn!(msg_type, "Unknown WS message type");

@@ -22,3 +22,5 @@ gethostname = "1"
 comfy-table = { workspace = true }
 libc = "0.2"
 http = "1"
+axum = { workspace = true }
+tower-http = { workspace = true }
