@@ -296,6 +296,103 @@ SVCEOF
 
 install_systemd_services
 
+# ---------------------------------------------------------------------------
+# Install launchd plist (macOS only)
+# ---------------------------------------------------------------------------
+install_launchd_services() {
+  if [ "$OS" != "darwin" ]; then
+    return
+  fi
+
+  SHELL_SYNC_BIN="$(command -v shell-sync 2>/dev/null || echo "${INSTALL_DIR}/shell-sync")"
+  PLIST_DIR="$HOME/Library/LaunchAgents"
+  mkdir -p "$PLIST_DIR"
+
+  # Client plist (most Macs are clients)
+  cat > "$PLIST_DIR/com.shell-sync.client.plist" <<PLISTEOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.shell-sync.client</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${SHELL_SYNC_BIN}</string>
+        <string>connect</string>
+        <string>--foreground</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>RUST_LOG</key>
+        <string>info</string>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>${HOME}/.shell-sync/client.log</string>
+    <key>StandardErrorPath</key>
+    <string>${HOME}/.shell-sync/client.log</string>
+</dict>
+</plist>
+PLISTEOF
+
+  # Server plist (optional, if running server on Mac)
+  cat > "$PLIST_DIR/com.shell-sync.server.plist" <<PLISTEOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.shell-sync.server</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${SHELL_SYNC_BIN}</string>
+        <string>serve</string>
+        <string>--foreground</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>RUST_LOG</key>
+        <string>info</string>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>${HOME}/.shell-sync/server.log</string>
+    <key>StandardErrorPath</key>
+    <string>${HOME}/.shell-sync/server.log</string>
+</dict>
+</plist>
+PLISTEOF
+
+  info "Launchd plists installed."
+  echo ""
+  echo "  Start the client now (and on every login):"
+  echo "    launchctl load $PLIST_DIR/com.shell-sync.client.plist"
+  echo ""
+  echo "  Stop the client:"
+  echo "    launchctl unload $PLIST_DIR/com.shell-sync.client.plist"
+  echo ""
+  echo "  Logs: ~/.shell-sync/client.log"
+}
+
+install_launchd_services
+
 echo ""
 info "Installation complete!"
 echo ""
