@@ -223,6 +223,79 @@ case ":$PATH:" in
     ;;
 esac
 
+# ---------------------------------------------------------------------------
+# Install systemd services (Linux only)
+# ---------------------------------------------------------------------------
+install_systemd_services() {
+  if [ "$OS" != "linux" ]; then
+    return
+  fi
+
+  if ! command -v systemctl >/dev/null 2>&1; then
+    return
+  fi
+
+  SHELL_SYNC_BIN="$(command -v shell-sync 2>/dev/null || echo "${INSTALL_DIR}/shell-sync")"
+
+  # Determine the right systemd directory and user flags
+  if [ "$(id -u)" -eq 0 ]; then
+    SYSTEMD_DIR="/etc/systemd/system"
+    SYSTEMCTL="systemctl"
+  else
+    SYSTEMD_DIR="$HOME/.config/systemd/user"
+    SYSTEMCTL="systemctl --user"
+    mkdir -p "$SYSTEMD_DIR"
+  fi
+
+  # Server service
+  cat > "$SYSTEMD_DIR/shell-sync-server.service" <<SVCEOF
+[Unit]
+Description=Shell Sync Server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=${SHELL_SYNC_BIN} serve --foreground
+Restart=on-failure
+RestartSec=5
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+
+  # Client service
+  cat > "$SYSTEMD_DIR/shell-sync-client.service" <<SVCEOF
+[Unit]
+Description=Shell Sync Client
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=${SHELL_SYNC_BIN} connect --foreground
+Restart=on-failure
+RestartSec=5
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+
+  $SYSTEMCTL daemon-reload
+  info "Systemd services installed."
+  echo ""
+  echo "  Enable the server (this machine hosts aliases):"
+  echo "    $SYSTEMCTL enable --now shell-sync-server"
+  echo ""
+  echo "  Enable the client (this machine syncs aliases):"
+  echo "    $SYSTEMCTL enable --now shell-sync-client"
+  echo ""
+  echo "  Enable both (this machine does both):"
+  echo "    $SYSTEMCTL enable --now shell-sync-server shell-sync-client"
+}
+
+install_systemd_services
+
 echo ""
 info "Installation complete!"
 echo ""
