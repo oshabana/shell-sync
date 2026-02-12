@@ -60,6 +60,55 @@ try_prebuilt() {
 # ---------------------------------------------------------------------------
 # Strategy 2: Build from source with cargo
 # ---------------------------------------------------------------------------
+ensure_build_deps() {
+  MISSING=""
+
+  # A C compiler is required for native dependencies (sqlite, libgit2, zstd)
+  if ! command -v cc >/dev/null 2>&1 && ! command -v gcc >/dev/null 2>&1 && ! command -v clang >/dev/null 2>&1; then
+    MISSING="C compiler (cc/gcc/clang)"
+  fi
+
+  if ! command -v make >/dev/null 2>&1; then
+    MISSING="${MISSING:+$MISSING, }make"
+  fi
+
+  if ! command -v git >/dev/null 2>&1; then
+    MISSING="${MISSING:+$MISSING, }git"
+  fi
+
+  if [ -n "$MISSING" ]; then
+    warn "Missing build dependencies: $MISSING"
+    echo ""
+
+    if [ "$OS" = "linux" ]; then
+      if command -v apt-get >/dev/null 2>&1; then
+        info "Installing build tools via apt..."
+        sudo apt-get update -qq && sudo apt-get install -y -qq build-essential pkg-config libssl-dev git
+      elif command -v dnf >/dev/null 2>&1; then
+        info "Installing build tools via dnf..."
+        sudo dnf install -y gcc make pkg-config openssl-devel git
+      elif command -v yum >/dev/null 2>&1; then
+        info "Installing build tools via yum..."
+        sudo yum install -y gcc make pkgconfig openssl-devel git
+      elif command -v pacman >/dev/null 2>&1; then
+        info "Installing build tools via pacman..."
+        sudo pacman -Sy --noconfirm base-devel openssl git
+      elif command -v apk >/dev/null 2>&1; then
+        info "Installing build tools via apk..."
+        sudo apk add build-base pkgconf openssl-dev git
+      else
+        error "Could not detect package manager. Install manually: $MISSING"
+      fi
+    elif [ "$OS" = "darwin" ]; then
+      if ! xcode-select -p >/dev/null 2>&1; then
+        info "Installing Xcode Command Line Tools..."
+        xcode-select --install 2>/dev/null || true
+        error "Please finish the Xcode CLT install prompt, then re-run this script."
+      fi
+    fi
+  fi
+}
+
 ensure_rust() {
   if command -v cargo >/dev/null 2>&1; then
     return 0
@@ -80,6 +129,7 @@ ensure_rust() {
 }
 
 build_from_source() {
+  ensure_build_deps
   ensure_rust
 
   info "Building shell-sync from source (this may take a few minutes)..."
