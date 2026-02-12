@@ -11,6 +11,12 @@ info() { printf '\033[1;34m%s\033[0m\n' "$1"; }
 warn() { printf '\033[1;33m%s\033[0m\n' "$1"; }
 error() { printf '\033[1;31m%s\033[0m\n' "$1"; exit 1; }
 
+# Use sudo only when not already root
+SUDO=""
+if [ "$(id -u)" -ne 0 ]; then
+  SUDO="sudo"
+fi
+
 # Detect OS and architecture
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
@@ -60,52 +66,88 @@ try_prebuilt() {
 # ---------------------------------------------------------------------------
 # Strategy 2: Build from source with cargo
 # ---------------------------------------------------------------------------
-ensure_build_deps() {
-  MISSING=""
+has_working_cc() {
+  # Check that a C compiler exists AND can actually compile something.
+  # command -v alone is not enough -- the binary may be missing or broken.
+  CC_BIN=""
+  for c in cc gcc clang; do
+    if command -v "$c" >/dev/null 2>&1; then
+      CC_BIN="$c"
+      break
+    fi
+  done
 
-  # A C compiler is required for native dependencies (sqlite, libgit2, zstd)
-  if ! command -v cc >/dev/null 2>&1 && ! command -v gcc >/dev/null 2>&1 && ! command -v clang >/dev/null 2>&1; then
-    MISSING="C compiler (cc/gcc/clang)"
+  [ -z "$CC_BIN" ] && return 1
+
+  # Smoke-test: try to compile a trivial program
+  TESTDIR=$(mktemp -d)
+  printf 'int main(){return 0;}\n' > "$TESTDIR/test.c"
+  if "$CC_BIN" -o "$TESTDIR/test" "$TESTDIR/test.c" >/dev/null 2>&1; then
+    rm -rf "$TESTDIR"
+    return 0
+  fi
+  rm -rf "$TESTDIR"
+  return 1
+}
+
+install_build_deps() {
+  if [ "$OS" = "linux" ]; then
+    if command -v apt-get >/dev/null 2>&1; then
+      info "Installing build tools via apt..."
+      $SUDO apt-get update -qq
+      $SUDO apt-get install -y -qq build-essential pkg-config libssl-dev git
+    elif command -v dnf >/dev/null 2>&1; then
+      info "Installing build tools via dnf..."
+      $SUDO dnf install -y gcc make pkg-config openssl-devel git
+    elif command -v yum >/dev/null 2>&1; then
+      info "Installing build tools via yum..."
+      $SUDO yum install -y gcc make pkgconfig openssl-devel git
+    elif command -v pacman >/dev/null 2>&1; then
+      info "Installing build tools via pacman..."
+      $SUDO pacman -Sy --noconfirm base-devel openssl git
+    elif command -v apk >/dev/null 2>&1; then
+      info "Installing build tools via apk..."
+      $SUDO apk add build-base pkgconf openssl-dev git
+    else
+      error "Could not detect package manager. Please install a C compiler (gcc), make, and git manually."
+    fi
+  elif [ "$OS" = "darwin" ]; then
+    if ! xcode-select -p >/dev/null 2>&1; then
+      info "Installing Xcode Command Line Tools..."
+      xcode-select --install 2>/dev/null || true
+      error "Please finish the Xcode CLT install prompt, then re-run this script."
+    fi
+  fi
+}
+
+ensure_build_deps() {
+  NEED_INSTALL=false
+
+  if ! has_working_cc; then
+    warn "No working C compiler found."
+    NEED_INSTALL=true
   fi
 
   if ! command -v make >/dev/null 2>&1; then
-    MISSING="${MISSING:+$MISSING, }make"
+    warn "make not found."
+    NEED_INSTALL=true
   fi
 
   if ! command -v git >/dev/null 2>&1; then
-    MISSING="${MISSING:+$MISSING, }git"
+    warn "git not found."
+    NEED_INSTALL=true
   fi
 
-  if [ -n "$MISSING" ]; then
-    warn "Missing build dependencies: $MISSING"
+  if [ "$NEED_INSTALL" = true ]; then
+    echo ""
+    install_build_deps
     echo ""
 
-    if [ "$OS" = "linux" ]; then
-      if command -v apt-get >/dev/null 2>&1; then
-        info "Installing build tools via apt..."
-        sudo apt-get update -qq && sudo apt-get install -y -qq build-essential pkg-config libssl-dev git
-      elif command -v dnf >/dev/null 2>&1; then
-        info "Installing build tools via dnf..."
-        sudo dnf install -y gcc make pkg-config openssl-devel git
-      elif command -v yum >/dev/null 2>&1; then
-        info "Installing build tools via yum..."
-        sudo yum install -y gcc make pkgconfig openssl-devel git
-      elif command -v pacman >/dev/null 2>&1; then
-        info "Installing build tools via pacman..."
-        sudo pacman -Sy --noconfirm base-devel openssl git
-      elif command -v apk >/dev/null 2>&1; then
-        info "Installing build tools via apk..."
-        sudo apk add build-base pkgconf openssl-dev git
-      else
-        error "Could not detect package manager. Install manually: $MISSING"
-      fi
-    elif [ "$OS" = "darwin" ]; then
-      if ! xcode-select -p >/dev/null 2>&1; then
-        info "Installing Xcode Command Line Tools..."
-        xcode-select --install 2>/dev/null || true
-        error "Please finish the Xcode CLT install prompt, then re-run this script."
-      fi
+    # Verify the compiler works after install
+    if ! has_working_cc; then
+      error "Build tools installation failed. Please install gcc, make, and git manually."
     fi
+    info "Build dependencies installed."
   fi
 }
 
