@@ -3,24 +3,30 @@ use shell_sync_core::encryption::KeyManager;
 use shell_sync_core::models::RegisterResponse;
 
 /// Register this machine with a sync server.
-/// If `server_url` is None, attempts mDNS discovery first.
+/// Resolution order: --server flag > SHELL_SYNC_SERVER env > mDNS discovery.
 pub async fn register(server_url: Option<String>, groups: Vec<String>) -> anyhow::Result<()> {
     let url = match server_url {
         Some(u) => u,
-        None => {
-            // Try mDNS discovery
-            match crate::discovery::discover_server(std::time::Duration::from_secs(5)).await {
-                Some(u) => {
-                    println!("Auto-discovered server via mDNS: {}", u);
-                    u
-                }
-                None => {
-                    anyhow::bail!(
-                        "No server found via mDNS. Specify --server URL or ensure the server is running with mDNS enabled."
-                    );
+        None => match std::env::var("SHELL_SYNC_SERVER") {
+            Ok(u) if !u.is_empty() => {
+                println!("Using server from SHELL_SYNC_SERVER: {}", u);
+                u
+            }
+            _ => {
+                // Try mDNS discovery
+                match crate::discovery::discover_server(std::time::Duration::from_secs(5)).await {
+                    Some(u) => {
+                        println!("Auto-discovered server via mDNS: {}", u);
+                        u
+                    }
+                    None => {
+                        anyhow::bail!(
+                            "No server found via mDNS. Specify --server URL, set SHELL_SYNC_SERVER, or ensure the server is running with mDNS enabled."
+                        );
+                    }
                 }
             }
-        }
+        },
     };
 
     let hostname = gethostname::gethostname()

@@ -32,8 +32,8 @@ pub enum Commands {
 
     /// Register this machine with a sync server
     Register {
-        /// Server URL (auto-discovered via mDNS if omitted)
-        #[arg(long)]
+        /// Server URL (falls back to SHELL_SYNC_SERVER env, then mDNS)
+        #[arg(long, env = "SHELL_SYNC_SERVER")]
         server: Option<String>,
         /// Comma-separated list of groups
         #[arg(long, default_value = "default")]
@@ -42,8 +42,8 @@ pub enum Commands {
 
     /// Start the client sync daemon
     Connect {
-        /// Server URL (uses config if omitted)
-        #[arg(long)]
+        /// Server URL (falls back to SHELL_SYNC_SERVER env, then config)
+        #[arg(long, env = "SHELL_SYNC_SERVER")]
         server: Option<String>,
         /// Run in foreground
         #[arg(long)]

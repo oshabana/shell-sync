@@ -15,7 +15,11 @@ use tracing::{error, info, warn};
 pub async fn run(server_override: Option<String>, foreground: bool) -> anyhow::Result<()> {
     let config = load_client_config()?;
 
-    let config = if let Some(url) = server_override {
+    // Resolution order: --server flag > SHELL_SYNC_SERVER env > saved config
+    let server_url = server_override
+        .or_else(|| std::env::var("SHELL_SYNC_SERVER").ok().filter(|s| !s.is_empty()));
+
+    let config = if let Some(url) = server_url {
         ClientConfig {
             server_url: url,
             ..config
